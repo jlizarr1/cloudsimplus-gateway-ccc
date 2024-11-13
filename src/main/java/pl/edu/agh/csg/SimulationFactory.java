@@ -2,6 +2,9 @@ package pl.edu.agh.csg;
 
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
+
+import main.java.pl.edu.agh.csg.VmDescriptor;
+
 import org.apache.commons.lang3.NotImplementedException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,6 +19,7 @@ public class SimulationFactory {
 
     private static final Logger logger = LoggerFactory.getLogger(SimulationFactory.class.getName());
     private static final Type cloudletDescriptors = new TypeToken<List<CloudletDescriptor>>() {}.getType();
+    private static final Type vmDescriptors = new TypeToken<List<VmDescriptor>>() {}.getType();
 
     public static final String SPLIT_LARGE_JOBS = "SPLIT_LARGE_JOBS";
     public static final String SPLIT_LARGE_JOBS_DEFAULT = "true";
@@ -29,7 +33,7 @@ public class SimulationFactory {
     public static final String INITIAL_L_VM_COUNT = "INITIAL_L_VM_COUNT";
     public static final String INITIAL_M_VM_COUNT = "INITIAL_M_VM_COUNT";
     public static final String INITIAL_S_VM_COUNT = "INITIAL_S_VM_COUNT";
-    public static final String INITIAL_VM_COUNT_DEFAULT = "1";
+    public static final String INITIAL_VM_COUNT_DEFAULT = "0";
 
     public static final String SOURCE_OF_JOBS_PARAMS = "PARAMS";
     public static final String SOURCE_OF_JOBS_PARAMS_JOBS = "JOBS";
@@ -37,6 +41,8 @@ public class SimulationFactory {
     public static final String SOURCE_OF_JOBS_DATABASE = "DB";
     public static final String SOURCE_OF_JOBS = "SOURCE_OF_JOBS";
     public static final String SOURCE_OF_JOBS_DEFAULT = SOURCE_OF_JOBS_PARAMS;
+
+    public static final String VM_DESCRIPTION = "VMS";
 
     private static final Gson gson = new Gson();
 
@@ -101,6 +107,8 @@ public class SimulationFactory {
             splitted = jobs;
         }
 
+        List<VmDescriptor> vmDescriptors = loadVmsFromParams(maybeParameters);
+
         return new WrappedSimulation(
                 settings,
                 identifier,
@@ -111,7 +119,8 @@ public class SimulationFactory {
                 }},
                 simulationSpeedUp,
                 queueWaitPenalty,
-                splitted);
+                splitted,
+                vmDescriptors);
     }
 
     private List<CloudletDescriptor> splitLargeJobs(List<CloudletDescriptor> jobs, SimulationSettings settings) {
@@ -139,6 +148,7 @@ public class SimulationFactory {
                     final long totalMipsNotZero = totalMips == 0 ? 1 : totalMips;
                     CloudletDescriptor splittedDescriptor = new CloudletDescriptor(
                             splittedId,
+                            //cloudletDescriptor.getAssignedVmId(),
                             cloudletDescriptor.getSubmissionDelay(),
                             totalMipsNotZero,
                             fractionOfCores);
@@ -169,6 +179,16 @@ public class SimulationFactory {
         return retVal;
     }
 
+    private List<VmDescriptor> loadVmsFromParams(Map<String, String> maybeParameters) {
+        final String vmsAsJson = maybeParameters.get(VM_DESCRIPTION);
+
+        final List<VmDescriptor> deserialized = gson.fromJson(vmsAsJson, vmDescriptors);
+
+        logger.debug("deserialized size: " + deserialized.size());
+
+        return deserialized;
+    }
+
     private CloudletDescriptor speedUp(CloudletDescriptor cloudletDescriptor, double simulationSpeedUp) {
         final long cloudletDescriptorMi = cloudletDescriptor.getMi();
         final long nonNegativeMi = cloudletDescriptorMi < 1 ? 1 : cloudletDescriptorMi;
@@ -179,6 +199,7 @@ public class SimulationFactory {
         final int numberOfCores = cloudletDescriptor.getNumberOfCores() < 0 ? 1 : cloudletDescriptor.getNumberOfCores();
         return new CloudletDescriptor(
                 cloudletDescriptor.getJobId(),
+                //cloudletDescriptor.getAssignedVmId(),
                 submissionDelay,
                 newMi,
                 numberOfCores

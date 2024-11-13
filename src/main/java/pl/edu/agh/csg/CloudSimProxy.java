@@ -20,6 +20,8 @@ import org.cloudsimplus.listeners.EventListener;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import main.java.pl.edu.agh.csg.VmDescriptor;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -58,11 +60,14 @@ public class CloudSimProxy {
     private int toAddJobId = 0;
     private int previousIntervalJobId = 0;
     private int nextVmId;
+    private List<VmDescriptor> vmDescriptors;
+    private Map<Integer, Double> interuptionFrequencies = new HashMap<>(); 
 
     public CloudSimProxy(SimulationSettings settings,
                          Map<String, Integer> initialVmsCount,
                          List<Cloudlet> inputJobs,
-                         double simulationSpeedUp) {
+                         double simulationSpeedUp,
+                         List<VmDescriptor> vmDescriptors) {
         this.settings = settings;
         this.cloudSim = new CloudSim(0.01);
         this.broker = createDatacenterBroker();
@@ -71,18 +76,16 @@ public class CloudSimProxy {
                 simulationSpeedUp,
                 settings.isPayingForTheFullHour());
         this.simulationSpeedUp = simulationSpeedUp;
+        this.vmDescriptors = vmDescriptors;
 
         this.nextVmId = 0;
 
-        final List<? extends Vm> smallVmList = createVmList(initialVmsCount.get(SMALL), SMALL);
-        final List<? extends Vm> mediumVmList = createVmList(initialVmsCount.get(MEDIUM), MEDIUM);
-        final List<? extends Vm> largeVmList = createVmList(initialVmsCount.get(LARGE), LARGE);
-        broker.submitVmList(smallVmList);
-        broker.submitVmList(mediumVmList);
-        broker.submitVmList(largeVmList);
+        final List<? extends Vm> vmList = createVmList();
+
+        broker.submitVmList(vmList);
 
         this.jobs.addAll(inputJobs);
-        Collections.sort(this.jobs, new DelayCloudletComparator());
+        //Collections.sort(this.jobs, new DelayCloudletComparator());
         this.jobs.forEach(c -> originalSubmissionDelay.put(c.getId(), c.getSubmissionDelay()));
 
         scheduleAdditionalCloudletProcessingEvent(this.jobs);
@@ -134,12 +137,13 @@ public class CloudSimProxy {
         return new LoggingDatacenter(cloudSim, hostList, new VmAllocationPolicySimple());
     }
 
-    private List<? extends Vm> createVmList(int vmCount, String type) {
-        List<Vm> vmList = new ArrayList<>(vmCount);
+    private List<? extends Vm> createVmList() {
+        List<Vm> vmList = new ArrayList<>(this.vmDescriptors.size());
 
-        for (int i = 0; i < vmCount; i++) {
-            // 1 VM == 1 HOST for simplicity
-            vmList.add(createVmWithId(type));
+        logger.debug("descriptor size: " + this.vmDescriptors.size());
+
+        for (VmDescriptor descriptor : this.vmDescriptors) {
+            vmList.add(createVmWithDescriptor(descriptor));
         }
 
         return vmList;
@@ -159,6 +163,26 @@ public class CloudSimProxy {
                 .setSize(settings.getBasicVmSize())
                 .setCloudletScheduler(new OptimizedCloudletScheduler())
                 .setDescription(type);
+        vmCost.notifyCreateVM(vm);
+        return vm;
+    }
+
+    private Vm createVmWithDescriptor(VmDescriptor descriptor) {
+        //Continue updating this
+        Vm vm = new VmSimple(
+                descriptor.getVmId(),
+                settings.getHostPeMips(),
+                descriptor.getComputePower());
+        logger.debug("id: " + descriptor.getVmId());
+        logger.debug("compute power: " + descriptor.getComputePower());
+        this.nextVmId++;
+        vm
+                .setRam(settings.getBasicVmRam())
+                .setBw(settings.getBasicVmBw())
+                .setSize(settings.getBasicVmSize())
+                .setCloudletScheduler(new OptimizedCloudletScheduler())
+                .setDescription("" + descriptor.getCost());
+        interuptionFrequencies.put(descriptor.getVmId(), descriptor.getInteruptionFrequency());
         vmCost.notifyCreateVM(vm);
         return vm;
     }
@@ -341,7 +365,7 @@ public class CloudSimProxy {
         previousIntervalJobId = nextVmId;
         List<Cloudlet> jobsToSubmit = new ArrayList<>();
 
-        while (toAddJobId < this.jobs.size() && this.jobs.get(toAddJobId).getSubmissionDelay() <= target) {
+        while (toAddJobId < this.jobs.size()) { //&& this.jobs.get(toAddJobId).getSubmissionDelay() <= target) {
             // we process every cloudlet only once here...
             final Cloudlet cloudlet = this.jobs.get(toAddJobId);
 

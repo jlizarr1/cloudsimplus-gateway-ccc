@@ -1,6 +1,9 @@
 package pl.edu.agh.csg;
 
 import com.google.gson.Gson;
+
+import main.java.pl.edu.agh.csg.VmDescriptor;
+
 import org.apache.commons.math3.stat.StatUtils;
 import org.cloudbus.cloudsim.cloudlets.Cloudlet;
 import org.slf4j.Logger;
@@ -19,6 +22,7 @@ public class WrappedSimulation {
     private static final int HISTORY_LENGTH = 30 * 60; // 30 minutes * 60s
     private final double queueWaitPenalty;
     private final List<CloudletDescriptor> initialJobsDescriptors;
+    private final List<VmDescriptor> vmDescriptors;
     private final double simulationSpeedUp;
     private final List<String> metricsNames = Arrays.asList(
             "vmAllocatedRatioHistory",
@@ -45,11 +49,13 @@ public class WrappedSimulation {
                              Map<String, Integer> initialVmsCount,
                              double simulationSpeedUp,
                              double queueWaitPenalty,
-                             List<CloudletDescriptor> jobs) {
+                             List<CloudletDescriptor> jobs,
+                             List<VmDescriptor> vmDescriptors) {
         this.settings = simulationSettings;
         this.identifier = identifier;
         this.initialVmsCount = initialVmsCount;
         this.initialJobsDescriptors = jobs;
+        this.vmDescriptors = vmDescriptors;
         this.simulationSpeedUp = simulationSpeedUp;
         this.queueWaitPenalty = queueWaitPenalty;
         this.simulationHistory = new SimulationHistory();
@@ -83,7 +89,7 @@ public class WrappedSimulation {
                 .stream()
                 .map(CloudletDescriptor::toCloudlet)
                 .collect(Collectors.toList());
-        cloudSimProxy = new CloudSimProxy(settings, initialVmsCount, cloudlets, simulationSpeedUp);
+        cloudSimProxy = new CloudSimProxy(settings, initialVmsCount, cloudlets, simulationSpeedUp, vmDescriptors);
 
         double[] obs = getObservation();
         return new ResetResult(obs);

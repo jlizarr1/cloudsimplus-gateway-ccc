@@ -2,6 +2,7 @@
 
 Magic spells:
 * `./gradlew build` - to build and run tests
+* `./gradlew build -x test` - to build without tests
 * `./gradlew dockerBuildImage` - to build the image
 
 ## Acknowledgements

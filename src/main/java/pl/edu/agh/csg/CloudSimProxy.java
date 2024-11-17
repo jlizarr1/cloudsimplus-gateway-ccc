@@ -2,6 +2,7 @@ package pl.edu.agh.csg;
 
 import org.cloudbus.cloudsim.allocationpolicies.VmAllocationPolicySimple;
 import org.cloudbus.cloudsim.cloudlets.Cloudlet;
+import org.cloudbus.cloudsim.cloudlets.CloudletSimple;
 import org.cloudbus.cloudsim.cloudlets.CloudletExecution;
 import org.cloudbus.cloudsim.core.CloudSim;
 import org.cloudbus.cloudsim.core.CloudSimTags;
@@ -17,11 +18,22 @@ import org.cloudbus.cloudsim.vms.Vm;
 import org.cloudbus.cloudsim.vms.VmSimple;
 import org.cloudsimplus.listeners.CloudletVmEventInfo;
 import org.cloudsimplus.listeners.EventListener;
+import org.cloudbus.cloudsim.util.DataCloudTags;
+import org.cloudbus.cloudsim.utilizationmodels.UtilizationModelFull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import main.java.pl.edu.agh.csg.VmDescriptor;
 
+import java.io.IOException;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -36,6 +48,11 @@ import java.util.Set;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 
 public class CloudSimProxy {
 
@@ -60,12 +77,14 @@ public class CloudSimProxy {
     private int toAddJobId = 0;
     private int previousIntervalJobId = 0;
     private int nextVmId;
+    private List<? extends Vm> vmList;
     private List<VmDescriptor> vmDescriptors;
     private Map<Integer, Double> interuptionFrequencies = new HashMap<>(); 
+    private Map<String, Integer> fullVmIdMap = new HashMap<>(); 
 
     public CloudSimProxy(SimulationSettings settings,
                          Map<String, Integer> initialVmsCount,
-                         List<Cloudlet> inputJobs,
+                         List<CloudletDescriptor> inputJobs,
                          double simulationSpeedUp,
                          List<VmDescriptor> vmDescriptors) {
         this.settings = settings;
@@ -80,11 +99,11 @@ public class CloudSimProxy {
 
         this.nextVmId = 0;
 
-        final List<? extends Vm> vmList = createVmList();
+        this.vmList = createVmList();
 
         broker.submitVmList(vmList);
 
-        this.jobs.addAll(inputJobs);
+        this.jobs.addAll(createCloudlets(inputJobs));
         //Collections.sort(this.jobs, new DelayCloudletComparator());
         this.jobs.forEach(c -> originalSubmissionDelay.put(c.getId(), c.getSubmissionDelay()));
 
@@ -92,6 +111,23 @@ public class CloudSimProxy {
 
         this.cloudSim.startSync();
         this.runFor(0.1);
+    }
+
+    private List<Cloudlet> createCloudlets(List<CloudletDescriptor> jobDescriptors) {
+        List<Cloudlet> cloudlets = new ArrayList<>();
+        for (CloudletDescriptor descriptor : jobDescriptors) {
+            Cloudlet cloudlet = new CloudletSimple(descriptor.getJobId(), descriptor.getMi(), descriptor.getNumberOfCores())
+                .setFileSize(DataCloudTags.DEFAULT_MTU)
+                .setOutputSize(DataCloudTags.DEFAULT_MTU)
+                .setUtilizationModel(new UtilizationModelFull());
+            cloudlet.setSubmissionDelay(descriptor.getSubmissionDelay());
+            Vm assignedVm = this.vmList.stream()
+                .filter(vm -> vm.getId() == this.fullVmIdMap.get(descriptor.getVmId()))
+                .findFirst().get();
+            cloudlet.setVm(assignedVm);
+            cloudlets.add(cloudlet);
+        }
+        return cloudlets;
     }
 
     public boolean allJobsFinished() {
@@ -170,11 +206,13 @@ public class CloudSimProxy {
     private Vm createVmWithDescriptor(VmDescriptor descriptor) {
         //Continue updating this
         Vm vm = new VmSimple(
-                descriptor.getVmId(),
+                this.nextVmId,
                 settings.getHostPeMips(),
                 descriptor.getComputePower());
         logger.debug("id: " + descriptor.getVmId());
         logger.debug("compute power: " + descriptor.getComputePower());
+        this.fullVmIdMap.put(descriptor.getVmId(), this.nextVmId);
+        this.interuptionFrequencies.put(this.nextVmId, descriptor.getInteruptionFrequency());
         this.nextVmId++;
         vm
                 .setRam(settings.getBasicVmRam())
@@ -182,7 +220,7 @@ public class CloudSimProxy {
                 .setSize(settings.getBasicVmSize())
                 .setCloudletScheduler(new OptimizedCloudletScheduler())
                 .setDescription("" + descriptor.getCost());
-        interuptionFrequencies.put(descriptor.getVmId(), descriptor.getInteruptionFrequency());
+        
         vmCost.notifyCreateVM(vm);
         return vm;
     }
@@ -365,10 +403,9 @@ public class CloudSimProxy {
         previousIntervalJobId = nextVmId;
         List<Cloudlet> jobsToSubmit = new ArrayList<>();
 
-        while (toAddJobId < this.jobs.size()) { //&& this.jobs.get(toAddJobId).getSubmissionDelay() <= target) {
+        while (toAddJobId < this.jobs.size() && this.jobs.get(toAddJobId).getSubmissionDelay() <= target) {
             // we process every cloudlet only once here...
             final Cloudlet cloudlet = this.jobs.get(toAddJobId);
-
             // the job shold enter the cluster once target is crossed
             cloudlet.setSubmissionDelay(1.0);
             cloudlet.addOnFinishListener(new EventListener<CloudletVmEventInfo>() {
@@ -499,6 +536,41 @@ public class CloudSimProxy {
         }
     }
 
+    public void spotInstanceRemoval() {
+        List<Vm> vmExecList = broker.getVmExecList();
+        Random rand = new Random();
+
+        for(Vm vm : vmExecList) {
+            if(interuptionFrequencies.get(vm.getId()) > rand.nextDouble()) {
+                destroyVm(vm);
+                updateExecutionPlan(vm.getId());
+            }
+        }
+    }
+
+    private void updateExecutionPlan(long vmId) {
+
+        try {
+            HttpClient client = HttpClient.newHttpClient();
+            
+            String data = "{\"instance_id\": \"" + vmId + "\"}";
+            
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(new URI("http://127.0.0.1:8000/interrupt_vm/"))
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(data))
+                    .build();
+            
+            
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            logger.debug("Response Code: " + response.statusCode());
+            logger.debug("Response Body: " + response.body());
+        } catch (IOException ex) {
+        } catch (InterruptedException ex) {
+        } catch (URISyntaxException ex) {
+        }
+    }
+
     private boolean canKillVm(String type, int size) {
         if (SMALL.equals(type)) {
             return size > 1;
@@ -522,9 +594,6 @@ public class CloudSimProxy {
 
     private void destroyVm(Vm vm) {
         final String vmSize = vm.getDescription();
-
-        // TODO: okazało się, że jak czyścimy submitted list to chyba "zapominamy" jakieś cloudlety wykonać
-        // wydaje mi się, że jest po prostu jakaś lista w schedulerze o jakiej zapominamy i trzeba
 
         // replaces broker.destroyVm
         final List<Cloudlet> affectedExecCloudlets = resetCloudlets(vm.getCloudletScheduler().getCloudletExecList());

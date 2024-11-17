@@ -12,12 +12,14 @@ public class CloudletDescriptor {
     private final long submissionDelay;
     private final long mi;
     private final int numberOfCores;
+    private final String vmId;
 
-    public CloudletDescriptor(int jobId, long submissionDelay, long mi, int numberOfCores) {
+    public CloudletDescriptor(int jobId, long submissionDelay, long mi, int numberOfCores, String vmId) {
         this.jobId = jobId;
         this.submissionDelay = submissionDelay;
         this.mi = mi;
         this.numberOfCores = numberOfCores;
+        this.vmId = vmId;
     }
 
     public int getJobId() {
@@ -34,6 +36,10 @@ public class CloudletDescriptor {
 
     public int getNumberOfCores() {
         return numberOfCores;
+    }
+
+    public String getVmId() {
+        return vmId;
     }
 
     @Override

@@ -89,7 +89,7 @@ public class WrappedSimulation {
                 .stream()
                 .map(CloudletDescriptor::toCloudlet)
                 .collect(Collectors.toList());
-        cloudSimProxy = new CloudSimProxy(settings, initialVmsCount, cloudlets, simulationSpeedUp, vmDescriptors);
+        cloudSimProxy = new CloudSimProxy(settings, initialVmsCount, initialJobsDescriptors, simulationSpeedUp, vmDescriptors);
 
         double[] obs = getObservation();
         return new ResetResult(obs);

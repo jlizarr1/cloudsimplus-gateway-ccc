@@ -3,19 +3,19 @@ package main.java.pl.edu.agh.csg;
 import java.util.Objects;
 
 public class VmDescriptor {
-    private int vmId;
+    private String vmId;
     private int computePower;
     private double interuptionFrequency;
     private double cost;
 
-    public VmDescriptor(int vmId, int computePower, double interuptionFrequency, double cost) {
+    public VmDescriptor(String vmId, int computePower, double interuptionFrequency, double cost) {
         this.vmId = vmId;
         this.computePower = computePower;
         this.interuptionFrequency = interuptionFrequency;
         this.cost = cost;
     }
 
-    public int getVmId() {
+    public String getVmId() {
         return vmId;
     }
 

@@ -148,10 +148,10 @@ public class SimulationFactory {
                     final long totalMipsNotZero = totalMips == 0 ? 1 : totalMips;
                     CloudletDescriptor splittedDescriptor = new CloudletDescriptor(
                             splittedId,
-                            //cloudletDescriptor.getAssignedVmId(),
                             cloudletDescriptor.getSubmissionDelay(),
                             totalMipsNotZero,
-                            fractionOfCores);
+                            fractionOfCores,
+                            cloudletDescriptor.getVmId());
                     splitted.add(splittedDescriptor);
                     splittedId++;
                     numberOfCores -= hostPeCnt;
@@ -199,10 +199,10 @@ public class SimulationFactory {
         final int numberOfCores = cloudletDescriptor.getNumberOfCores() < 0 ? 1 : cloudletDescriptor.getNumberOfCores();
         return new CloudletDescriptor(
                 cloudletDescriptor.getJobId(),
-                //cloudletDescriptor.getAssignedVmId(),
                 submissionDelay,
                 newMi,
-                numberOfCores
+                numberOfCores,
+                cloudletDescriptor.getVmId()
         );
     }
 

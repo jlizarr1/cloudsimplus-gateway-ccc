@@ -184,6 +184,9 @@ public class WrappedSimulation {
             case 6:
                 removeVM(CloudSimProxy.LARGE);
                 break;
+            case 7:
+                spotInstanceRemoval();
+                break;
         }
     }
 
@@ -198,6 +201,10 @@ public class WrappedSimulation {
                     + " L: " + this.vmCounter.getStartedVms(CloudSimProxy.LARGE)
             );
         }
+    }
+
+    private void spotInstanceRemoval() {
+        cloudSimProxy.spotInstanceRemoval();
     }
 
     private void addNewVM(String type) {

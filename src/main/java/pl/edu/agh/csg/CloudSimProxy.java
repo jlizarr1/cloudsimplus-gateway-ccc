@@ -80,7 +80,9 @@ public class CloudSimProxy {
     private List<? extends Vm> vmList;
     private List<VmDescriptor> vmDescriptors;
     private Map<Integer, Double> interuptionFrequencies = new HashMap<>(); 
-    private Map<String, Integer> fullVmIdMap = new HashMap<>(); 
+    private Map<String, Integer> VmIdStringToInt = new HashMap<>(); 
+    private Map<Integer, String> VmIdIntToString = new HashMap<>(); 
+    private int numInterruptions = 1;
 
     public CloudSimProxy(SimulationSettings settings,
                          Map<String, Integer> initialVmsCount,
@@ -122,7 +124,7 @@ public class CloudSimProxy {
                 .setUtilizationModel(new UtilizationModelFull());
             cloudlet.setSubmissionDelay(descriptor.getSubmissionDelay());
             Vm assignedVm = this.vmList.stream()
-                .filter(vm -> vm.getId() == this.fullVmIdMap.get(descriptor.getVmId()))
+                .filter(vm -> vm.getId() == this.VmIdStringToInt.get(descriptor.getVmId()))
                 .findFirst().get();
             cloudlet.setVm(assignedVm);
             cloudlets.add(cloudlet);
@@ -211,7 +213,9 @@ public class CloudSimProxy {
                 descriptor.getComputePower());
         logger.debug("id: " + descriptor.getVmId());
         logger.debug("compute power: " + descriptor.getComputePower());
-        this.fullVmIdMap.put(descriptor.getVmId(), this.nextVmId);
+        this.VmIdStringToInt.put(descriptor.getVmId(), this.nextVmId);
+        this.VmIdIntToString.put(this.nextVmId, descriptor.getVmId());
+        logger.debug("Adding VM with ids: " + this.nextVmId + " " + descriptor.getVmId());
         this.interuptionFrequencies.put(this.nextVmId, descriptor.getInteruptionFrequency());
         this.nextVmId++;
         vm
@@ -411,13 +415,16 @@ public class CloudSimProxy {
             cloudlet.addOnFinishListener(new EventListener<CloudletVmEventInfo>() {
                 @Override
                 public void update(CloudletVmEventInfo info) {
-                    logger.debug("Cloudlet: " + cloudlet.getId() + "/" + cloudlet.getVm().getId()
+                    logger.debug("Cloudlet: " + cloudlet.getId() + "/" + VmIdIntToString.get(Integer.valueOf((int)cloudlet.getVm().getId()))
                             + " Finished.");
                     finishedIds.add(info.getCloudlet().getId());
                 }
             });
             jobsToSubmit.add(cloudlet);
             toAddJobId++;
+
+            //simulate possibility of spot instance removal
+            //spotInstanceRemoval();
         }
 
         if (jobsToSubmit.size() > 0) {
@@ -539,13 +546,20 @@ public class CloudSimProxy {
     public void spotInstanceRemoval() {
         List<Vm> vmExecList = broker.getVmExecList();
         Random rand = new Random();
+        logger.debug("Number of VMs: " + vmExecList.size());
+        if(this.numInterruptions > 0 && vmExecList.size() > 1) {
+            Vm vm = vmExecList.get(rand.nextInt(vmExecList.size()));
+            logger.debug("Chosen VM: " + vm.getId());
 
-        for(Vm vm : vmExecList) {
-            if(interuptionFrequencies.get(vm.getId()) > rand.nextDouble()) {
-                destroyVm(vm);
+            double frequency = interuptionFrequencies.get(Integer.valueOf((int)vm.getId()));
+            if(frequency > 0) { //&& interuptionFrequencies.get(vm.getId()) > rand.nextDouble()) {
                 updateExecutionPlan(vm.getId());
+                destroyVm(vm);
+                this.numInterruptions--;
+                logger.debug("Killing VM: " + vm.getId());
             }
         }
+        
     }
 
     private void updateExecutionPlan(long vmId) {
@@ -553,7 +567,7 @@ public class CloudSimProxy {
         try {
             HttpClient client = HttpClient.newHttpClient();
             
-            String data = "{\"instance_id\": \"" + vmId + "\"}";
+            String data = "{\"instance_id\": \"" + VmIdIntToString.get(Integer.valueOf((int)vmId)) + "\"}";
             
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(new URI("http://127.0.0.1:8000/interrupt_vm/"))

@@ -111,6 +111,14 @@ public class CloudSimProxy {
 
         scheduleAdditionalCloudletProcessingEvent(this.jobs);
 
+        this.cloudSim.addOnClockTickListener(eventInfo -> {
+            if (this.cloudSim.clock() == 5) {
+                Vm vmToFail = this.vmList.get(0);
+                destroyVm(vmToFail);
+                logger.debug("VM " + VmIdIntToString.get(Integer.valueOf((int)vmToFail.getId())) + " has gone down at time " + this.cloudSim.clock());
+            }
+        });
+
         this.cloudSim.startSync();
         this.runFor(0.1);
     }
@@ -288,6 +296,26 @@ public class CloudSimProxy {
         final Iterator<Cloudlet> iterator = potentiallyWaitingJobs.iterator();
         while (iterator.hasNext()) {
             Cloudlet job = iterator.next();
+            //remove jobs from the plan that have already succeeded
+            if(job.getStatus() == Cloudlet.Status.SUCCESS) {
+                try {
+                    HttpClient client = HttpClient.newHttpClient();
+                    
+                    String data = "{\"task_id\": \"" + job.getId() + "\", \"status\": \"completed\"}";
+                    
+                    HttpRequest request = HttpRequest.newBuilder()
+                            .uri(new URI("http://127.0.0.1:8000/update_task_status/"))
+                            .header("Content-Type", "application/json")
+                            .PUT(HttpRequest.BodyPublishers.ofString(data))
+                            .build();
+                    
+                    
+                    HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+                } catch (IOException ex) {
+                } catch (InterruptedException ex) {
+                } catch (URISyntaxException ex) {
+                }
+            }
             if (job.getStatus() == Cloudlet.Status.INEXEC || job.getStatus() == Cloudlet.Status.SUCCESS || job.getStatus() == Cloudlet.Status.CANCELED) {
                 alreadyStarted.add(job);
                 iterator.remove();
@@ -411,7 +439,7 @@ public class CloudSimProxy {
             // we process every cloudlet only once here...
             final Cloudlet cloudlet = this.jobs.get(toAddJobId);
             // the job shold enter the cluster once target is crossed
-            cloudlet.setSubmissionDelay(1.0);
+            cloudlet.setSubmissionDelay(5.0);
             cloudlet.addOnFinishListener(new EventListener<CloudletVmEventInfo>() {
                 @Override
                 public void update(CloudletVmEventInfo info) {
@@ -578,7 +606,7 @@ public class CloudSimProxy {
             
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
             logger.debug("Response Code: " + response.statusCode());
-            logger.debug("Response Body: " + response.body());
+            logger.debug("Response Body: " + response.body()); //TODO: turn this into an instance of the schedule
         } catch (IOException ex) {
         } catch (InterruptedException ex) {
         } catch (URISyntaxException ex) {
@@ -607,6 +635,7 @@ public class CloudSimProxy {
     }
 
     private void destroyVm(Vm vm) {
+        updateExecutionPlan(vm.getId());
         final String vmSize = vm.getDescription();
 
         // replaces broker.destroyVm
@@ -629,6 +658,7 @@ public class CloudSimProxy {
     }
 
     private void rescheduleCloudlets(List<Cloudlet> affectedCloudlets) {
+        //TODO: Update this to use our new schedule
         final double currentClock = cloudSim.clock();
 
         affectedCloudlets.forEach(cloudlet -> {

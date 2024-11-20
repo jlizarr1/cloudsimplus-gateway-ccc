@@ -36,7 +36,7 @@ public class SimulationSettings {
 
         // we can have 3000 == the same as number of hosts, as every host can have 1 small, 1 medium and 1 large Vm
         maxVmsPerSize = Long.parseLong(withDefault("MAX_VMS_PER_SIZE", "3000"));
-        printJobsPeriodically = Boolean.parseBoolean(withDefault("PRINT_JOBS_PERIODICALLY", "false"));
+        printJobsPeriodically = Boolean.parseBoolean(withDefault("PRINT_JOBS_PERIODICALLY", "true"));
         payingForTheFullHour = Boolean.parseBoolean(withDefault("PAYING_FOR_THE_FULL_HOUR", "false"));
         storeCreatedCloudletsDatacenterBroker = Boolean.parseBoolean(withDefault("STORE_CREATED_CLOUDLETS_DATACENTER_BROKER", "false"));
     }

@@ -36,7 +36,7 @@ public class WrappedSimulation {
 
     private final MetricsStorage metricsStorage = new MetricsStorage(HISTORY_LENGTH, metricsNames);
     private final Gson gson = new Gson();
-    private final double INTERVAL = 1.0;
+    private final double INTERVAL = 100.0;
     private final String identifier;
     private final Map<String, Integer> initialVmsCount;
     private final SimulationSettings settings;

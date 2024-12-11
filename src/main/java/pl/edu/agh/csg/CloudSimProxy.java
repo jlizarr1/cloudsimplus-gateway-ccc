@@ -54,6 +54,10 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 
+import java.util.Random;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+
 public class CloudSimProxy {
 
     public static final String SMALL = "S";
@@ -112,15 +116,23 @@ public class CloudSimProxy {
         scheduleAdditionalCloudletProcessingEvent(this.jobs);
 
         this.cloudSim.addOnClockTickListener(eventInfo -> {
-            if (this.cloudSim.clock() == 5) {
-                Vm vmToFail = this.vmList.get(0);
-                destroyVm(vmToFail);
-                logger.debug("VM " + VmIdIntToString.get(Integer.valueOf((int)vmToFail.getId())) + " has gone down at time " + this.cloudSim.clock());
+            logger.debug("current clock: " + this.cloudSim.clock());
+            if (this.cloudSim.clock() == 48.86) {
+                Random random = new Random();
+                int numVms = this.vmList.size();
+                for(int i = 0; i < 3; i++) {
+                    int randIndex = random.nextInt(numVms);
+                    Vm vmToFail = this.vmList.get(randIndex);
+                    destroyVm(vmToFail);
+                    logger.debug("VM " + VmIdIntToString.get(Integer.valueOf((int)vmToFail.getId())) + " has gone down at time " + this.cloudSim.clock());
+                    numVms--;
+                }
+                
             }
         });
 
         this.cloudSim.startSync();
-        this.runFor(0.1);
+        this.runFor(1000);
     }
 
     private List<Cloudlet> createCloudlets(List<CloudletDescriptor> jobDescriptors) {
@@ -132,7 +144,7 @@ public class CloudSimProxy {
                 .setUtilizationModel(new UtilizationModelFull());
             cloudlet.setSubmissionDelay(descriptor.getSubmissionDelay());
             Vm assignedVm = this.vmList.stream()
-                .filter(vm -> vm.getId() == this.VmIdStringToInt.get(descriptor.getVmId()))
+                .filter(vm -> (int) vm.getId() == this.VmIdStringToInt.get(descriptor.getVmId()))
                 .findFirst().get();
             cloudlet.setVm(assignedVm);
             cloudlets.add(cloudlet);
@@ -484,6 +496,7 @@ public class CloudSimProxy {
     }
 
     private boolean hasUnfinishedJobs() {
+        logger.debug("finished " + this.finishedIds.size() + " total " + this.jobs.size());
         return this.finishedIds.size() < this.jobs.size();
     }
 
@@ -590,8 +603,9 @@ public class CloudSimProxy {
         
     }
 
-    private void updateExecutionPlan(long vmId) {
-
+    private Map updateExecutionPlan(long vmId) {
+        ObjectMapper objectMapper = new ObjectMapper();
+        Map<String,List<Integer>> plan = new HashMap<>();
         try {
             HttpClient client = HttpClient.newHttpClient();
             
@@ -606,11 +620,14 @@ public class CloudSimProxy {
             
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
             logger.debug("Response Code: " + response.statusCode());
-            logger.debug("Response Body: " + response.body()); //TODO: turn this into an instance of the schedule
+            Map<String,Object> result = objectMapper.readValue(response.body(), Map.class);
+            result = (Map<String, Object>) result.get("data");
+            plan = (Map<String, List<Integer>>) result.get("execution_plan");
         } catch (IOException ex) {
         } catch (InterruptedException ex) {
         } catch (URISyntaxException ex) {
         }
+        return plan;
     }
 
     private boolean canKillVm(String type, int size) {
@@ -635,32 +652,36 @@ public class CloudSimProxy {
     }
 
     private void destroyVm(Vm vm) {
-        updateExecutionPlan(vm.getId());
+        Map<String,List<Integer>> plan = updateExecutionPlan(vm.getId());
         final String vmSize = vm.getDescription();
 
         // replaces broker.destroyVm
-        final List<Cloudlet> affectedExecCloudlets = resetCloudlets(vm.getCloudletScheduler().getCloudletExecList());
-        final List<Cloudlet> affectedWaitingGloudlets = resetCloudlets(vm.getCloudletScheduler().getCloudletWaitingList());
-        final List<Cloudlet> affectedCloudlets = Stream.concat(affectedExecCloudlets.stream(), affectedWaitingGloudlets.stream()).collect(Collectors.toList());
+        List<Cloudlet> allRunningCloudlets = new ArrayList<>();
+        allRunningCloudlets.addAll(resetCloudlets(vm.getCloudletScheduler().getCloudletExecList()));
         vm.getHost().destroyVm(vm);
         vm.getCloudletScheduler().clear();
+        this.vmList.remove(vm);
         // replaces broker.destroyVm
+
+        for (Vm liveVm : this.vmList) {
+            allRunningCloudlets.addAll(resetCloudlets(liveVm.getCloudletScheduler().getCloudletExecList()));
+        }
 
         logger.debug("Killing VM: "
                 + vm.getId()
                 + " to reschedule cloudlets: "
-                + affectedCloudlets.size()
+                + allRunningCloudlets.size()
                 + " type: "
                 + vmSize);
-        if(affectedCloudlets.size() > 0) {
-            rescheduleCloudlets(affectedCloudlets);
+        if(allRunningCloudlets.size() > 0) {
+            rescheduleCloudlets(allRunningCloudlets, plan);
         }
     }
 
-    private void rescheduleCloudlets(List<Cloudlet> affectedCloudlets) {
-        //TODO: Update this to use our new schedule
+    private void rescheduleCloudlets(List<Cloudlet> affectedCloudlets, Map<String,List<Integer>> plan) {
         final double currentClock = cloudSim.clock();
 
+        long brokerStart = System.nanoTime();
         affectedCloudlets.forEach(cloudlet -> {
             Double submissionDelay = originalSubmissionDelay.get(cloudlet.getId());
 
@@ -676,9 +697,17 @@ public class CloudSimProxy {
             }
 
             cloudlet.setSubmissionDelay(submissionDelay);
-        });
 
-        long brokerStart = System.nanoTime();
+            for (Map.Entry<String, List<Integer>> entry : plan.entrySet()) {
+                if(entry.getValue().contains((int) cloudlet.getId())) {
+                    Vm assignedVm = this.vmList.stream()
+                        .filter(vm -> (int) vm.getId() == this.VmIdStringToInt.get(entry.getKey()))
+                        .findFirst().get();
+                    cloudlet.setVm(assignedVm);
+                    break;
+                }
+            }
+        });
         submitCloudletsList(affectedCloudlets);
         long brokerStop = System.nanoTime();
 
